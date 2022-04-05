@@ -27,7 +27,7 @@ use paperclip_core::v2::{
     schema::Apiv2Operation,
 };
 
-use std::{collections::BTreeMap, fmt::Debug, future::Future, mem};
+use std::{collections::BTreeMap, fmt::Debug, future::Future};
 
 const METHODS: &[Method] = &[
     Method::GET,
@@ -84,15 +84,15 @@ impl<T> Mountable for Resource<T> {
     }
 
     fn operations(&mut self) -> BTreeMap<HttpMethod, DefaultOperationRaw> {
-        mem::take(&mut self.operations)
+        std::mem::take(&mut self.operations)
     }
 
     fn definitions(&mut self) -> BTreeMap<String, DefaultSchemaRaw> {
-        mem::take(&mut self.definitions)
+        std::mem::take(&mut self.definitions)
     }
 
     fn security_definitions(&mut self) -> BTreeMap<String, SecurityScheme> {
-        mem::take(&mut self.security)
+        std::mem::take(&mut self.security)
     }
 }
 
@@ -474,15 +474,15 @@ impl<T> Mountable for Scope<T> {
     }
 
     fn security_definitions(&mut self) -> BTreeMap<String, SecurityScheme> {
-        mem::take(&mut self.security)
+        std::mem::take(&mut self.security)
     }
 
     fn definitions(&mut self) -> BTreeMap<String, DefaultSchemaRaw> {
-        mem::take(&mut self.definitions)
+        std::mem::take(&mut self.definitions)
     }
 
     fn update_operations(&mut self, map: &mut BTreeMap<String, DefaultPathItemRaw>) {
-        for (path, item) in mem::take(&mut self.path_map) {
+        for (path, item) in std::mem::take(&mut self.path_map) {
             let op_map = map.entry(path).or_insert_with(Default::default);
             op_map.methods.extend(item.methods.into_iter());
         }
@@ -513,8 +513,8 @@ impl ServiceFactory<ServiceRequest> for Route {
     type Service = <actix_web::Route as ServiceFactory<ServiceRequest>>::Service;
     type Future = <actix_web::Route as ServiceFactory<ServiceRequest>>::Future;
 
-    #[allow(clippy::unit_arg)]
     fn new_service(&self, cfg: Self::Config) -> Self::Future {
+        #[allow(clippy::unit_arg)]
         self.inner.new_service(cfg)
     }
 }
@@ -655,15 +655,15 @@ where
     }
 
     fn operations(&mut self) -> BTreeMap<HttpMethod, DefaultOperationRaw> {
-        mem::take(&mut self.operations)
+        std::mem::take(&mut self.operations)
     }
 
     fn security_definitions(&mut self) -> BTreeMap<String, SecurityScheme> {
-        mem::take(&mut self.security)
+        std::mem::take(&mut self.security)
     }
 
     fn definitions(&mut self) -> BTreeMap<String, DefaultSchemaRaw> {
-        mem::take(&mut self.definitions)
+        std::mem::take(&mut self.definitions)
     }
 }
 
@@ -700,15 +700,15 @@ impl<'a> Mountable for ServiceConfig<'a> {
     }
 
     fn security_definitions(&mut self) -> BTreeMap<String, SecurityScheme> {
-        mem::take(&mut self.security)
+        std::mem::take(&mut self.security)
     }
 
     fn definitions(&mut self) -> BTreeMap<String, DefaultSchemaRaw> {
-        mem::take(&mut self.definitions)
+        std::mem::take(&mut self.definitions)
     }
 
     fn update_operations(&mut self, map: &mut BTreeMap<String, DefaultPathItemRaw>) {
-        for (path, item) in mem::take(&mut self.path_map) {
+        for (path, item) in std::mem::take(&mut self.path_map) {
             let op_map = map.entry(path).or_insert_with(Default::default);
             op_map.methods.extend(item.methods.into_iter());
         }
@@ -734,6 +734,16 @@ impl<'a> ServiceConfig<'a> {
         self.definitions.extend(factory.definitions().into_iter());
         factory.update_operations(&mut self.path_map);
         SecurityScheme::append_map(factory.security_definitions(), &mut self.security);
+        self.inner.service(factory);
+        self
+    }
+
+    /// Wrapper for [`actix_web::web::ServiceConfig::service`](https://docs.rs/actix-web/*/actix_web/web/struct.ServiceConfig.html#method.service).
+    /// This one does not register routes into spec.
+    pub fn service_raw<F>(&mut self, factory: F) -> &mut Self
+    where
+        F: HttpServiceFactory + 'static,
+    {
         self.inner.service(factory);
         self
     }
