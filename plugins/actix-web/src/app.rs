@@ -235,6 +235,17 @@ where
         }
     }
 
+    pub fn with_spec<F>(self, mut call: F) -> Self
+    where
+        F: FnMut(&mut DefaultApiRaw),
+    {
+        {
+            let mut api = self.spec.write();
+            call(&mut api);
+        }
+        self
+    }
+
     /// Mounts the specification for all operations and definitions
     /// recorded by the wrapper and serves them in the given path
     /// as a JSON.

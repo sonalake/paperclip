@@ -738,16 +738,6 @@ impl<'a> ServiceConfig<'a> {
         self
     }
 
-    /// Wrapper for [`actix_web::web::ServiceConfig::service`](https://docs.rs/actix-web/*/actix_web/web/struct.ServiceConfig.html#method.service).
-    /// This one does not register routes into spec.
-    pub fn service_raw<F>(&mut self, factory: F) -> &mut Self
-    where
-        F: HttpServiceFactory + 'static,
-    {
-        self.inner.service(factory);
-        self
-    }
-
     /// Proxy for [`actix_web::web::ServiceConfig::external_resource`](https://docs.rs/actix-web/*/actix_web/web/struct.ServiceConfig.html#method.external_resource).
     ///
     /// **NOTE:** This doesn't affect spec generation.
