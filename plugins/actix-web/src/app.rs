@@ -41,6 +41,13 @@ pub trait OpenApiExt<T> {
     /// paths and their corresponding operations.
     fn wrap_api(self) -> Self::Wrapper;
 
+    /// Consume self and return the underlying OpenApi spec
+    pub fn into_spec(self) -> DefaultApiRaw {
+        Arc::try_unwrap(self.spec)
+            .expect("something else is holding self.spec!")
+            .into_inner()
+    }
+
     /// Same as `wrap_api` initializing with provided specification
     /// defaults. Useful for defining Api properties outside of definitions and
     /// paths.
