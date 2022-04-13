@@ -156,7 +156,7 @@ pub fn emit_v2_operation(attrs: TokenStream, input: TokenStream) -> TokenStream 
     let operation_modifier = if is_responder {
         quote! { paperclip::actix::ResponderWrapper::<actix_web::HttpResponse> }
     } else {
-        quote! { <<#wrapper as std::future::Future>::Output> }
+        quote! { <<#wrapper as std::future::Future>::Output as OperationModifier> }
     };
 
     quote!(
@@ -174,8 +174,8 @@ pub fn emit_v2_operation(attrs: TokenStream, input: TokenStream) -> TokenStream 
                     .. Default::default()
                 };
                 #(
-                    <#modifiers>::update_parameter(&mut op);
-                    <#modifiers>::update_security(&mut op);
+                    <#modifiers as OperationModifier>::update_parameter(&mut op);
+                    <#modifiers as OperationModifier>::update_security(&mut op);
                 )*
                 #operation_modifier::update_response(&mut op);
                 op
@@ -186,7 +186,7 @@ pub fn emit_v2_operation(attrs: TokenStream, input: TokenStream) -> TokenStream 
                 use paperclip::actix::OperationModifier;
                 let mut map = Default::default();
                 #(
-                    <#modifiers>::update_security_definitions(&mut map);
+                    <#modifiers as OperationModifier>::update_security_definitions(&mut map);
                 )*
                 map
             }
@@ -195,7 +195,7 @@ pub fn emit_v2_operation(attrs: TokenStream, input: TokenStream) -> TokenStream 
                 use paperclip::actix::OperationModifier;
                 let mut map = std::collections::BTreeMap::new();
                 #(
-                    <#modifiers>::update_definitions(&mut map);
+                    <#modifiers as OperationModifier>::update_definitions(&mut map);
                 )*
                 #operation_modifier::update_definitions(&mut map);
                 map
