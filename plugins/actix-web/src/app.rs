@@ -3,6 +3,8 @@
 extern crate actix_service2 as actix_service;
 extern crate actix_web4 as actix_web;
 
+#[cfg(feature = "rapidoc")]
+use super::RAPIDOC;
 #[cfg(feature = "swagger-ui")]
 use super::SWAGGER_DIST;
 use super::{
@@ -10,7 +12,7 @@ use super::{
     Mountable,
 };
 use actix_service::ServiceFactory;
-#[cfg(feature = "swagger-ui")]
+#[cfg(any(feature = "swagger-ui"))]
 use actix_web::HttpRequest;
 use actix_web::{
     body::MessageBody,
@@ -20,6 +22,8 @@ use actix_web::{
 use futures::future::{ok as fut_ok, Ready};
 use paperclip_core::v2::models::{DefaultApiRaw, SecurityScheme};
 use parking_lot::RwLock;
+#[cfg(feature = "rapidoc")]
+use tinytemplate::TinyTemplate;
 
 use std::{collections::BTreeMap, fmt::Debug, future::Future, sync::Arc};
 
@@ -28,7 +32,7 @@ pub struct App<T> {
     spec: Arc<RwLock<DefaultApiRaw>>,
     #[cfg(feature = "v3")]
     spec_v3: Option<Arc<RwLock<openapiv3::OpenAPI>>>,
-    #[cfg(feature = "swagger-ui")]
+    #[cfg(any(feature = "swagger-ui", feature = "rapidoc"))]
     spec_path: Option<String>,
     inner: Option<actix_web::App<T>>,
 }
@@ -55,7 +59,7 @@ impl<T> OpenApiExt<T> for actix_web::App<T> {
             spec: Arc::new(RwLock::new(DefaultApiRaw::default())),
             #[cfg(feature = "v3")]
             spec_v3: None,
-            #[cfg(feature = "swagger-ui")]
+            #[cfg(any(feature = "swagger-ui", feature = "rapidoc"))]
             spec_path: None,
             inner: Some(self),
         }
@@ -66,23 +70,16 @@ impl<T> OpenApiExt<T> for actix_web::App<T> {
             spec: Arc::new(RwLock::new(spec)),
             #[cfg(feature = "v3")]
             spec_v3: None,
-            #[cfg(feature = "swagger-ui")]
+            #[cfg(any(feature = "swagger-ui", feature = "rapidoc"))]
             spec_path: None,
             inner: Some(self),
         }
     }
 }
 
-impl<T, B> App<T>
+impl<T> App<T>
 where
-    B: MessageBody,
-    T: ServiceFactory<
-        ServiceRequest,
-        Config = (),
-        Response = ServiceResponse<B>,
-        Error = Error,
-        InitError = (),
-    >,
+    T: ServiceFactory<ServiceRequest, Config = (), Error = Error, InitError = ()>,
 {
     /// Consume self and return the underlying OpenApi spec
     pub fn into_spec(self) -> DefaultApiRaw {
@@ -180,14 +177,14 @@ where
     /// Proxy for [`actix_web::web::App::wrap`](https://docs.rs/actix-web/*/actix_web/struct.App.html#method.wrap).
     ///
     /// **NOTE:** This doesn't affect spec generation.
-    pub fn wrap<M, B1>(
+    pub fn wrap<M, B>(
         mut self,
         mw: M,
     ) -> App<
         impl ServiceFactory<
             ServiceRequest,
             Config = (),
-            Response = ServiceResponse<B1>,
+            Response = ServiceResponse<B>,
             Error = Error,
             InitError = (),
         >,
@@ -196,17 +193,17 @@ where
         M: Transform<
                 T::Service,
                 ServiceRequest,
-                Response = ServiceResponse<B1>,
+                Response = ServiceResponse<B>,
                 Error = Error,
                 InitError = (),
             > + 'static,
-        B1: MessageBody,
+        B: MessageBody,
     {
         App {
             spec: self.spec,
             #[cfg(feature = "v3")]
             spec_v3: self.spec_v3,
-            #[cfg(feature = "swagger-ui")]
+            #[cfg(any(feature = "swagger-ui", feature = "rapidoc"))]
             spec_path: None,
             inner: self.inner.take().map(|a| a.wrap(mw)),
         }
@@ -215,28 +212,28 @@ where
     /// Proxy for [`actix_web::web::App::wrap_fn`](https://docs.rs/actix-web/*/actix_web/struct.App.html#method.wrap_fn).
     ///
     /// **NOTE:** This doesn't affect spec generation.
-    pub fn wrap_fn<B1, F, R>(
+    pub fn wrap_fn<F, R, B>(
         mut self,
         mw: F,
     ) -> App<
         impl ServiceFactory<
             ServiceRequest,
             Config = (),
-            Response = ServiceResponse<B1>,
+            Response = ServiceResponse<B>,
             Error = Error,
             InitError = (),
         >,
     >
     where
-        B1: MessageBody,
         F: Fn(ServiceRequest, &T::Service) -> R + Clone + 'static,
-        R: Future<Output = Result<ServiceResponse<B1>, Error>>,
+        R: Future<Output = Result<ServiceResponse<B>, Error>>,
+        B: MessageBody,
     {
         App {
             spec: self.spec,
             #[cfg(feature = "v3")]
             spec_v3: self.spec_v3,
-            #[cfg(feature = "swagger-ui")]
+            #[cfg(any(feature = "swagger-ui", feature = "rapidoc"))]
             spec_path: None,
             inner: self.inner.take().map(|a| a.wrap_fn(mw)),
         }
@@ -257,7 +254,7 @@ where
     /// recorded by the wrapper and serves them in the given path
     /// as a JSON.
     pub fn with_json_spec_at(mut self, path: &str) -> Self {
-        #[cfg(feature = "swagger-ui")]
+        #[cfg(any(feature = "swagger-ui", feature = "rapidoc"))]
         {
             self.spec_path = Some(path.to_owned());
         }
@@ -364,6 +361,50 @@ where
                     }),
                 ),
             )
+        });
+        self
+    }
+
+    /// Exposes the previously built JSON specification with RapiDoc at the given path
+    ///
+    /// **NOTE:** you **MUST** call with_json_spec_at before calling this function
+    #[cfg(feature = "rapidoc")]
+    pub fn with_rapidoc_at(mut self, path: &str) -> Self {
+        let spec_path = self.spec_path.clone().expect(
+            "Specification not set, be sure to call `with_json_spec_at` before this function",
+        );
+
+        let path: String = path.trim_end_matches('/').into();
+
+        let rapidoc = RAPIDOC
+            .get_file("index.html")
+            .and_then(|file| file.contents_utf8())
+            .unwrap_or_else(|| panic!("Failed to get file RapiDoc UI"));
+        let mut tt = TinyTemplate::new();
+        tt.add_template("index.html", rapidoc).unwrap();
+
+        async fn rapidoc_handler(
+            data: actix_web::web::Data<(TinyTemplate<'_>, String)>,
+        ) -> Result<HttpResponse, Error> {
+            let data = data.into_inner();
+            let (tmpl, spec_path) = data.as_ref();
+            let spec_path = format!("/{}", spec_path);
+            let ctx = serde_json::json!({ "spec_url": spec_path });
+            let s = tmpl.render("index.html", &ctx).map_err(|_| {
+                actix_web::error::ErrorInternalServerError("Error rendering RapiDoc documentation")
+            })?;
+            Ok(HttpResponse::Ok().content_type("text/html").body(s))
+        }
+
+        self.inner = self.inner.take().map(|a| {
+            a.app_data(actix_web::web::Data::new((tt, spec_path)))
+                .service(
+                    actix_web::web::resource(format!("{}/index.html", path))
+                        .route(actix_web::web::get().to(rapidoc_handler)),
+                )
+                .service(
+                    actix_web::web::resource(path).route(actix_web::web::get().to(rapidoc_handler)),
+                )
         });
         self
     }

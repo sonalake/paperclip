@@ -93,7 +93,7 @@ impl ToString for DataTypeFormat {
             DataTypeFormat::Double => "double",
             DataTypeFormat::Byte => "byte",
             DataTypeFormat::Binary => "binary",
-            DataTypeFormat::Date => "data",
+            DataTypeFormat::Date => "date",
             DataTypeFormat::DateTime => "datetime",
             DataTypeFormat::Password => "password",
             DataTypeFormat::Url => "url",
@@ -105,6 +105,28 @@ impl ToString for DataTypeFormat {
             DataTypeFormat::Other => "other",
         }
         .to_string()
+    }
+}
+
+impl From<DataTypeFormat> for DataType {
+    fn from(src: DataTypeFormat) -> Self {
+        match src {
+            DataTypeFormat::Int32 => Self::Integer,
+            DataTypeFormat::Int64 => Self::Integer,
+            DataTypeFormat::Float => Self::Number,
+            DataTypeFormat::Double => Self::Number,
+            DataTypeFormat::Byte => Self::String,
+            DataTypeFormat::Binary => Self::String,
+            DataTypeFormat::Date => Self::String,
+            DataTypeFormat::DateTime => Self::String,
+            DataTypeFormat::Password => Self::String,
+            DataTypeFormat::Url => Self::String,
+            DataTypeFormat::Uuid => Self::String,
+            DataTypeFormat::Ip => Self::String,
+            DataTypeFormat::IpV4 => Self::String,
+            DataTypeFormat::IpV6 => Self::String,
+            DataTypeFormat::Other => Self::Object,
+        }
     }
 }
 
@@ -685,7 +707,7 @@ impl<S> Operation<Parameter<S>, Response<S>> {
             .rev()
         {
             if let Some(n) = names.pop() {
-                p.name = n;
+                p.name = n.split_once(':').map(|t| t.0.to_string()).unwrap_or(n);
             } else {
                 break;
             }
@@ -696,7 +718,7 @@ impl<S> Operation<Parameter<S>, Response<S>> {
 /// Reference object.
 ///
 /// <https://github.com/OAI/OpenAPI-Specification/blob/master/versions/2.0.md#referenceObject>
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Reference {
     #[serde(rename = "$ref")]
     pub reference: String,

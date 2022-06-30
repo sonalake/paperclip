@@ -138,6 +138,33 @@ pub fn emit_v2_operation(attrs: TokenStream, input: TokenStream) -> TokenStream 
     // Initialize operation parameters from macro attributes
     let (mut op_params, mut op_values) = parse_operation_attrs(attrs);
 
+    if op_params.iter().any(|i| *i == "skip") {
+        return quote!(
+            #struct_definition
+
+            #item_ast
+
+            impl #impl_generics paperclip::v2::schema::Apiv2Operation for #unit_struct #ty_generics #where_clause {
+                fn operation() -> paperclip::v2::models::DefaultOperationRaw {
+                    Default::default()
+                }
+
+                #[allow(unused_mut)]
+                fn security_definitions() -> std::collections::BTreeMap<String, paperclip::v2::models::SecurityScheme> {
+                    Default::default()
+                }
+
+                fn definitions() -> std::collections::BTreeMap<String, paperclip::v2::models::DefaultSchemaRaw> {
+                    Default::default()
+                }
+
+                fn is_visible() -> bool {
+                    false
+                }
+            }
+        ).into();
+    }
+
     // Optionally extract summary and description from doc comments
     if !op_params.iter().any(|i| *i == "summary") {
         let (summary, description) = extract_fn_documentation(&item_ast);
@@ -149,6 +176,11 @@ pub fn emit_v2_operation(attrs: TokenStream, input: TokenStream) -> TokenStream 
             op_params.push(Ident::new("description", item_ast.span()));
             op_values.push(description)
         }
+    }
+
+    if op_params.iter().any(|i| *i == "deprecated") || extract_deprecated(&item_ast.attrs) {
+        op_params.push(Ident::new("deprecated", item_ast.span()));
+        op_values.push(quote!(true))
     }
 
     let modifiers = extract_fn_arguments_types(&item_ast);
@@ -202,7 +234,7 @@ pub fn emit_v2_operation(attrs: TokenStream, input: TokenStream) -> TokenStream 
             }
         }
     )
-    .into()
+        .into()
 }
 
 /// Extract punctuated generic parameters from fn definition
@@ -244,88 +276,101 @@ fn parse_operation_attrs(attrs: TokenStream) -> (Vec<Ident>, Vec<proc_macro2::To
     let mut params = Vec::new();
     let mut values = Vec::new();
     for attr in attrs.0 {
-        if let NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) = &attr {
-            if let Some(ident) = path.get_ident() {
-                match ident.to_string().as_str() {
-                    "summary" | "description" | "operation_id" => {
-                        if let Lit::Str(val) = lit {
-                            params.push(ident.clone());
-                            values.push(quote!(Some(#val.to_string())));
-                        } else {
-                            emit_error!(lit.span(), "Expected string literal: {:?}", lit)
-                        }
+        match &attr {
+            NestedMeta::Meta(Meta::Path(attr_path)) => {
+                if let Some(attr_) = attr_path.get_ident() {
+                    if *attr_ == "skip" || *attr_ == "deprecated" {
+                        params.push(attr_.clone());
+                    } else {
+                        emit_error!(attr_.span(), "Not supported bare attribute {:?}", attr_)
                     }
-                    "consumes" | "produces" => {
-                        if let Lit::Str(mimes) = lit {
-                            let mut mime_types = Vec::new();
-                            for val in mimes.value().split(',') {
-                                let val = val.trim();
-                                if let Err(err) = val.parse::<mime::Mime>() {
-                                    emit_error!(
-                                        lit.span(),
-                                        "Value {} does not parse as mime type: {}",
-                                        val,
-                                        err
-                                    );
-                                } else {
-                                    mime_types.push(quote!(paperclip::v2::models::MediaRange(#val.parse().unwrap())));
-                                }
-                            }
-                            if !mime_types.is_empty() {
-                                params.push(ident.clone());
-                                values.push(quote!({
-                                    let mut tmp = std::collections::BTreeSet::new();
-                                    #(
-                                        tmp.insert(#mime_types);
-                                    )*
-                                    Some(tmp)
-                                }));
-                            }
-                        } else {
-                            emit_error!(
-                                lit.span(),
-                                "Expected comma separated values in string literal: {:?}",
-                                lit
-                            )
-                        }
-                    }
-                    x => emit_error!(ident.span(), "Unknown attribute {}", x),
                 }
-            } else {
-                emit_error!(
-                    path.span(),
-                    "Expected single identifier, got path {:?}",
-                    path
-                )
             }
-        } else if let NestedMeta::Meta(Meta::List(MetaList { path, nested, .. })) = &attr {
-            if let Some(ident) = path.get_ident() {
-                match ident.to_string().as_str() {
-                    "tags" => {
-                        let mut tags = Vec::new();
-                        for meta in nested.pairs().map(|pair| pair.into_value()) {
-                            if let NestedMeta::Meta(Meta::Path(Path { segments, .. })) = meta {
-                                tags.push(segments[0].ident.to_string());
-                            } else if let NestedMeta::Lit(Lit::Str(lit)) = meta {
-                                tags.push(lit.value());
+            NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
+                if let Some(ident) = path.get_ident() {
+                    match ident.to_string().as_str() {
+                        "summary" | "description" | "operation_id" => {
+                            if let Lit::Str(val) = lit {
+                                params.push(ident.clone());
+                                values.push(quote!(Some(# val.to_string())));
+                            } else {
+                                emit_error!(lit.span(), "Expected string literal: {:?}", lit)
+                            }
+                        }
+                        "consumes" | "produces" => {
+                            if let Lit::Str(mimes) = lit {
+                                let mut mime_types = Vec::new();
+                                for val in mimes.value().split(',') {
+                                    let val = val.trim();
+                                    if let Err(err) = val.parse::<mime::Mime>() {
+                                        emit_error!(
+                                            lit.span(),
+                                            "Value {} does not parse as mime type: {}",
+                                            val,
+                                            err
+                                        );
+                                    } else {
+                                        mime_types.push(quote!(paperclip::v2::models::MediaRange( # val.parse().unwrap())));
+                                    }
+                                }
+                                if !mime_types.is_empty() {
+                                    params.push(ident.clone());
+                                    values.push(quote!({
+                                    let mut tmp = std::collections::BTreeSet::new();
+                                    # (
+                                    tmp.insert(# mime_types);
+                                    ) *
+                                    Some(tmp)
+                                    }));
+                                }
                             } else {
                                 emit_error!(
-                                    meta.span(),
-                                    "Expected comma separated list of tags idents: {:?}",
-                                    meta
+                                    lit.span(),
+                                    "Expected comma separated values in string literal: {:?}",
+                                    lit
                                 )
                             }
                         }
-                        if !tags.is_empty() {
-                            params.push(ident.clone());
-                            values.push(quote!(vec![ #( #tags.to_string() ),* ]));
-                        }
+                        x => emit_error!(ident.span(), "Unknown attribute {}", x),
                     }
-                    x => emit_error!(ident.span(), "Unknown list ident {}", x),
+                } else {
+                    emit_error!(
+                        path.span(),
+                        "Expected single identifier, got path {:?}",
+                        path
+                    )
                 }
             }
-        } else {
-            emit_error!(attr.span(), "Not supported attribute type {:?}", attr)
+            NestedMeta::Meta(Meta::List(MetaList { path, nested, .. })) => {
+                if let Some(ident) = path.get_ident() {
+                    match ident.to_string().as_str() {
+                        "tags" => {
+                            let mut tags = Vec::new();
+                            for meta in nested.pairs().map(|pair| pair.into_value()) {
+                                if let NestedMeta::Meta(Meta::Path(Path { segments, .. })) = meta {
+                                    tags.push(segments[0].ident.to_string());
+                                } else if let NestedMeta::Lit(Lit::Str(lit)) = meta {
+                                    tags.push(lit.value());
+                                } else {
+                                    emit_error!(
+                                        meta.span(),
+                                        "Expected comma separated list of tags idents: {:?}",
+                                        meta
+                                    )
+                                }
+                            }
+                            if !tags.is_empty() {
+                                params.push(ident.clone());
+                                values.push(quote!(vec![ #( #tags.to_string() ),* ]));
+                            }
+                        }
+                        x => emit_error!(ident.span(), "Unknown list ident {}", x),
+                    }
+                }
+            }
+            _ => {
+                emit_error!(attr.span(), "Not supported attribute type {:?}", attr)
+            }
         }
     }
     (params, values)
@@ -390,7 +435,7 @@ pub fn emit_v2_errors(attrs: TokenStream, input: TokenStream) -> TokenStream {
                             let status_code = attr_value.base10_parse::<u16>()
                                 .map_err(|_| emit_error!(span, "Invalid u16 in code argument")).ok();
                             list.push((status_code, None, None, attr));
-                        },
+                        }
                         // "description" attribute updates last element in list
                         (Some("description"), Lit::Str(attr_value)) =>
                             if let Some(last_value) = list.last_mut() {
@@ -421,13 +466,13 @@ pub fn emit_v2_errors(attrs: TokenStream, input: TokenStream) -> TokenStream {
                             },
                         _ => emit_error!(span, "Invalid macro attribute. Should be plain u16, 'code = u16', 'description = str', 'schema = str' or 'default_schema = str'")
                     }
-                },
+                }
                 // Read plain status code as attribute.
                 NestedMeta::Lit(Lit::Int(attr_value)) => {
                     let status_code = attr_value.base10_parse::<u16>()
-                    .map_err(|_| emit_error!(span, "Invalid u16 in code argument")).ok();
+                        .map_err(|_| emit_error!(span, "Invalid u16 in code argument")).ok();
                     list.push((status_code, None, None, attr));
-                },
+                }
                 _ => emit_error!(span, "This macro supports only named attributes - 'code' (u16), 'description' (str), 'schema' (str) or 'default_schema' (str)")
             }
 
@@ -439,7 +484,7 @@ pub fn emit_v2_errors(attrs: TokenStream, input: TokenStream) -> TokenStream {
             let (code, description, schema) = match quad {
                 (Some(code), Some(description), schema, _) => {
                     (code, description.to_owned(), schema.to_owned())
-                },
+                }
                 (Some(code), None, schema, attr) => {
                     let span = attr.span().unwrap();
                     let description = StatusCode::from_u16(*code)
@@ -456,7 +501,7 @@ pub fn emit_v2_errors(attrs: TokenStream, input: TokenStream) -> TokenStream {
                         )
                         .unwrap_or_else(|_| String::new());
                     (code, description, schema.to_owned())
-                },
+                }
                 (None, _, _, _) => return None,
             };
             Some((*code, description, schema))
@@ -688,6 +733,29 @@ fn extract_rename(attrs: &[Attribute]) -> Option<String> {
     None
 }
 
+fn extract_example(attrs: &[Attribute]) -> Option<String> {
+    let attrs = extract_openapi_attrs(attrs);
+    for attr in attrs.flat_map(|attr| attr.into_iter()) {
+        if let NestedMeta::Meta(Meta::NameValue(nv)) = attr {
+            if nv.path.is_ident("example") {
+                if let Lit::Str(s) = nv.lit {
+                    return Some(s.value());
+                } else {
+                    emit_error!(
+                        nv.lit.span().unwrap(),
+                        format!(
+                            "`#[{}(example = \"...\")]` expects a string argument",
+                            SCHEMA_MACRO_ATTR
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Actual parser and emitter for `api_v2_schema` macro.
 pub fn emit_v2_definition(input: TokenStream) -> TokenStream {
     let item_ast = match crate::expect_struct_or_enum(input) {
@@ -701,6 +769,15 @@ pub fn emit_v2_definition(input: TokenStream) -> TokenStream {
 
     let docs = extract_documentation(&item_ast.attrs);
     let docs = docs.trim();
+
+    let example = if let Some(example) = extract_example(&item_ast.attrs) {
+        // allow to parse escaped json string or single str value
+        quote!(
+            serde_json::from_str::<serde_json::Value>(#example).ok().or_else(|| Some(#example.into()))
+        )
+    } else {
+        quote!(None)
+    };
 
     let props = SerdeProps::from_item_attrs(&item_ast.attrs);
 
@@ -768,6 +845,7 @@ pub fn emit_v2_definition(input: TokenStream) -> TokenStream {
     let default_schema_raw_def = quote! {
         let mut schema = DefaultSchemaRaw {
             name: Some(#schema_name.into()),
+            example: #example,
             ..Default::default()
         };
     };
@@ -776,6 +854,7 @@ pub fn emit_v2_definition(input: TokenStream) -> TokenStream {
     let default_schema_raw_def = quote! {
         let mut schema = DefaultSchemaRaw {
             name: Some(Self::__paperclip_schema_name()), // Add name for later use.
+            example: #example,
             .. Default::default()
         };
     };
@@ -971,14 +1050,6 @@ pub fn emit_v2_security(input: TokenStream) -> TokenStream {
         }
     }
 
-    fn quote_option(value: Option<&String>) -> proc_macro2::TokenStream {
-        if let Some(value) = value {
-            quote! { Some(#value.to_string()) }
-        } else {
-            quote! { None }
-        }
-    }
-
     let scopes_stream = scopes
         .iter()
         .fold(proc_macro2::TokenStream::new(), |mut stream, scope| {
@@ -1069,6 +1140,225 @@ pub fn emit_v2_security(input: TokenStream) -> TokenStream {
     gen.into()
 }
 
+/// Actual parser and emitter for `Apiv2Header` derive macro.
+pub fn emit_v2_header(input: TokenStream) -> TokenStream {
+    let item_ast = match crate::expect_struct_or_enum(input) {
+        Ok(i) => i,
+        Err(ts) => return ts,
+    };
+
+    if let Some(empty) = check_empty_schema(&item_ast) {
+        return empty;
+    }
+
+    let name = &item_ast.ident;
+    // Add `Apiv2Schema` bound for impl if the type is generic.
+    let mut generics = item_ast.generics.clone();
+    let bound = syn::parse2::<TraitBound>(quote!(paperclip::v2::schema::Apiv2Schema))
+        .expect("expected to parse trait bound");
+    generics.type_params_mut().for_each(|param| {
+        param.bounds.push(bound.clone().into());
+    });
+
+    let opt_impl = add_optional_impl(name, &generics);
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+    let mut header_definitions = vec![];
+
+    let valid_attrs = vec!["description", "name", "format"];
+    let invalid_attr_msg = format!(
+        "Invalid macro attribute. Should be named attribute {:?}",
+        valid_attrs
+    );
+
+    fn quote_format(format: &str) -> proc_macro2::TokenStream {
+        match format {
+            "int32" => quote! { Some(paperclip::v2::models::DataTypeFormat::Int32) },
+            "int64" => quote! { Some(paperclip::v2::models::DataTypeFormat::Int64) },
+            "float" => quote! { Some(paperclip::v2::models::DataTypeFormat::Float) },
+            "double" => quote! { Some(paperclip::v2::models::DataTypeFormat::Double) },
+            "byte" => quote! { Some(paperclip::v2::models::DataTypeFormat::Byte) },
+            "binary" => quote! { Some(paperclip::v2::models::DataTypeFormat::Binary) },
+            "date" => quote! { Some(paperclip::v2::models::DataTypeFormat::Date) },
+            "datetime" | "date-time" => {
+                quote! { Some(paperclip::v2::models::DataTypeFormat::DateTime) }
+            }
+            "password" => quote! { Some(paperclip::v2::models::DataTypeFormat::Password) },
+            "url" => quote! { Some(paperclip::v2::models::DataTypeFormat::Url) },
+            "uuid" => quote! { Some(paperclip::v2::models::DataTypeFormat::Uuid) },
+            "ip" => quote! { Some(paperclip::v2::models::DataTypeFormat::Ip) },
+            "ipv4" => quote! { Some(paperclip::v2::models::DataTypeFormat::IpV4) },
+            "ipv6" => quote! { Some(paperclip::v2::models::DataTypeFormat::IpV6) },
+            "other" => quote! { Some(paperclip::v2::models::DataTypeFormat::Other) },
+            v => {
+                emit_error!(
+                    format.span().unwrap(),
+                    format!("Invalid format attribute value. Got {}", v)
+                );
+                quote! { None }
+            }
+        }
+    }
+
+    let struct_ast = match &item_ast.data {
+        Data::Struct(struct_ast) => struct_ast,
+        Data::Enum(_) | Data::Union(_) => {
+            emit_error!(
+                item_ast.span(),
+                "Invalid data type. Apiv2Header should be defined on a struct"
+            );
+            return quote!().into();
+        }
+    };
+
+    if extract_openapi_attrs(&item_ast.attrs)
+        .peekable()
+        .peek()
+        .is_some()
+    {
+        emit_error!(
+            item_ast.span(),
+            "Invalid openapi attribute. openapi attribute should be defined at struct fields level"
+        );
+        return quote!().into();
+    }
+
+    for field in &struct_ast.fields {
+        let mut parameter_attrs = HashMap::new();
+        let field_name = &field.ident;
+        let docs = extract_documentation(&field.attrs);
+        let docs = docs.trim();
+
+        // Read header params from openapi attr.
+        for nested in extract_openapi_attrs(&field.attrs) {
+            for nested_attr in nested {
+                let span = nested_attr.span().unwrap();
+                match &nested_attr {
+                    // Read bare attribute (support for skip attribute)
+                    NestedMeta::Meta(Meta::Path(attr_path)) => {
+                        if let Some(attr) = attr_path.get_ident() {
+                            if *attr == "skip" {
+                                parameter_attrs.insert("skip".to_owned(), "".to_owned());
+                            }
+                        }
+                    }
+                    // Read named attribute.
+                    NestedMeta::Meta(Meta::NameValue(name_value)) => {
+                        let attr_name = name_value.path.get_ident().map(|id| id.to_string());
+                        let attr_value = &name_value.lit;
+
+                        if let Some(attr_name) = attr_name {
+                            if valid_attrs.contains(&attr_name.as_str()) {
+                                if let Lit::Str(attr_value) = attr_value {
+                                    if parameter_attrs
+                                        .insert(attr_name.clone(), attr_value.value())
+                                        .is_some()
+                                    {
+                                        emit_warning!(
+                                            span,
+                                            "Attribute {} defined multiple times.",
+                                            attr_name
+                                        );
+                                    }
+                                } else {
+                                    emit_warning!(
+                                        span,
+                                        "Invalid value for named attribute: {}",
+                                        attr_name
+                                    );
+                                }
+                            } else {
+                                emit_warning!(span, invalid_attr_msg);
+                            }
+                        } else {
+                            emit_error!(span, invalid_attr_msg);
+                        }
+                    }
+                    _ => {
+                        emit_error!(span, invalid_attr_msg);
+                    }
+                }
+            }
+        }
+
+        if parameter_attrs.contains_key("skip") {
+            continue;
+        }
+
+        let docs = (!docs.is_empty()).then(|| docs.to_owned());
+        let quoted_description = quote_option(parameter_attrs.get("description").or(docs.as_ref()));
+        let name_string = field_name.as_ref().map(|name| name.to_string());
+        let quoted_name = if let Some(name) = parameter_attrs.get("name").or(name_string.as_ref()) {
+            name
+        } else {
+            emit_error!(
+                field.span(),
+                "Missing header name. Either add a name using the openapi attribute or use named struct parameter"
+            );
+            return quote!().into();
+        };
+
+        let (quoted_type, quoted_format) = if let Some(ty_ref) = get_field_type(field) {
+            (
+                quote! { {
+                    use paperclip::v2::schema::TypedData;
+                    Some(#ty_ref::data_type())
+                } },
+                quote! { {
+                    use paperclip::v2::schema::TypedData;
+                    #ty_ref::format()
+                } },
+            )
+        } else {
+            (quote! { None }, quote! { None })
+        };
+
+        let (quoted_type, quoted_format) = if let Some(format) = parameter_attrs.get("format") {
+            let quoted_format = quote_format(&*format);
+            let quoted_type = quote! { #quoted_format.map(|format| format.into()) };
+            (quoted_type, quoted_format)
+        } else {
+            (quoted_type, quoted_format)
+        };
+
+        let def_block = quote! {
+            paperclip::v2::models::Parameter::<paperclip::v2::models::DefaultSchemaRaw> {
+                name: #quoted_name.to_owned(),
+                in_: paperclip::v2::models::ParameterIn::Header,
+                description: #quoted_description,
+                data_type: #quoted_type,
+                format: #quoted_format,
+                required: Self::required(),
+                ..Default::default()
+            }
+        };
+
+        header_definitions.push(def_block);
+    }
+
+    let gen = quote! {
+        impl #impl_generics paperclip::v2::schema::Apiv2Schema for #name #ty_generics #where_clause {
+            fn header_parameter_schema() -> Vec<paperclip::v2::models::Parameter<paperclip::v2::models::DefaultSchemaRaw>> {
+                vec![
+                    #(#header_definitions),*
+                ]
+            }
+        }
+
+        #opt_impl
+    };
+
+    gen.into()
+}
+
+fn quote_option(value: Option<&String>) -> proc_macro2::TokenStream {
+    if let Some(value) = value {
+        quote! { Some(#value.to_string()) }
+    } else {
+        quote! { None }
+    }
+}
+
 #[cfg(feature = "nightly")]
 fn add_optional_impl(_: &Ident, _: &Generics) -> proc_macro2::TokenStream {
     // Empty impl for "nightly" feature because specialization helps us there.
@@ -1138,7 +1428,7 @@ fn handle_unnamed_field_struct(
             let docs = extract_documentation(&field.attrs);
             let docs = docs.trim();
 
-            let mut gen = if !SerdeFlatten::exists(&field.attrs) {
+            let gen = if !SerdeFlatten::exists(&field.attrs) {
                 // this is really not what we'd want to do because that's not how the
                 // deserialized struct will be like, ideally we want an actual tuple
                 // this type should therefore not be used for anything else than `Path`
@@ -1148,19 +1438,20 @@ fn handle_unnamed_field_struct(
                         s.description = Some(#docs.to_string());
                     }
                     schema.properties.insert(#inner_field_id.to_string(), s.into());
+                    if #ty_ref::required() {
+                        schema.required.insert(#inner_field_id.to_string());
+                    }
                 })
             } else {
                 quote!({
                     let s = #ty_ref::raw_schema();
                     schema.properties.extend(s.properties);
+
+                    if #ty_ref::required() {
+                        schema.required.extend(s.required);
+                    }
                 })
             };
-
-            gen.extend(quote! {
-                if #ty_ref::required() {
-                    schema.required.insert(#inner_field_id.to_string());
-                }
-            });
 
             props_gen.extend(gen);
         }
@@ -1174,6 +1465,18 @@ fn extract_openapi_attrs(
     field_attrs.iter().filter_map(|a| match a.parse_meta() {
         Ok(Meta::List(list)) if list.path.is_ident(SCHEMA_MACRO_ATTR) => Some(list.nested),
         _ => None,
+    })
+}
+
+fn extract_deprecated(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|a| match a.parse_meta() {
+        Ok(Meta::Path(mp)) if mp.is_ident("deprecated") => true,
+        Ok(Meta::List(mml)) => mml
+            .path
+            .segments
+            .into_iter()
+            .any(|p| p.ident == "deprecated"),
+        _ => false,
     })
 }
 
@@ -1239,6 +1542,12 @@ fn handle_field_struct(
             .expect("missing field name?")
             .to_string();
 
+        //Strip r# prefix if any
+        field_name = field_name
+            .strip_prefix("r#")
+            .map(|n| n.to_string())
+            .unwrap_or(field_name);
+
         if SerdeSkip::exists(&field.attrs) {
             continue;
         }
@@ -1254,26 +1563,38 @@ fn handle_field_struct(
         let docs = extract_documentation(&field.attrs);
         let docs = docs.trim();
 
-        let mut gen = if !SerdeFlatten::exists(&field.attrs) {
+        let example = if let Some(example) = extract_example(&field.attrs) {
+            // allow to parse escaped json string or single str value
+            quote!({
+                s.example = serde_json::from_str::<serde_json::Value>(#example).ok().or_else(|| Some(#example.into()));
+            })
+        } else {
+            quote!({})
+        };
+
+        let gen = if !SerdeFlatten::exists(&field.attrs) {
             quote!({
                 let mut s = #ty_ref::raw_schema();
                 if !#docs.is_empty() {
                     s.description = Some(#docs.to_string());
                 }
+                #example;
                 schema.properties.insert(#field_name.into(), s.into());
+
+                if #ty_ref::required() {
+                    schema.required.insert(#field_name.into());
+                }
             })
         } else {
             quote!({
                 let s = #ty_ref::raw_schema();
                 schema.properties.extend(s.properties);
+
+                if #ty_ref::required() {
+                    schema.required.extend(s.required);
+                }
             })
         };
-
-        gen.extend(quote! {
-            if #ty_ref::required() {
-                schema.required.insert(#field_name.into());
-            }
-        });
 
         props_gen.extend(gen);
     }

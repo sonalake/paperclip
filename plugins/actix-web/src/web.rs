@@ -15,6 +15,7 @@ pub use actix_web::{
 use crate::Mountable;
 use actix_service::ServiceFactory;
 use actix_web::{
+    body::MessageBody,
     dev::{AppService, Handler, HttpServiceFactory, ServiceRequest, ServiceResponse, Transform},
     guard::Guard,
     http::Method,
@@ -63,15 +64,16 @@ impl Resource {
     }
 }
 
-impl<T> HttpServiceFactory for Resource<actix_web::Resource<T>>
+impl<T, B> HttpServiceFactory for Resource<actix_web::Resource<T>>
 where
     T: ServiceFactory<
             ServiceRequest,
             Config = (),
-            Response = ServiceResponse,
+            Response = ServiceResponse<B>,
             Error = Error,
             InitError = (),
         > + 'static,
+    B: MessageBody + 'static,
 {
     fn register(self, config: &mut AppService) {
         self.inner.register(config)
@@ -98,13 +100,7 @@ impl<T> Mountable for Resource<T> {
 
 impl<T> Resource<actix_web::Resource<T>>
 where
-    T: ServiceFactory<
-        ServiceRequest,
-        Config = (),
-        Response = ServiceResponse,
-        Error = Error,
-        InitError = (),
-    >,
+    T: ServiceFactory<ServiceRequest, Config = (), Error = Error, InitError = ()>,
 {
     /// Proxy for [`actix_web::Resource::name`](https://docs.rs/actix-web/*/actix_web/struct.Resource.html#method.name).
     ///
@@ -157,7 +153,7 @@ where
     /// Proxy for [`actix_web::web::Resource::wrap`](https://docs.rs/actix-web/*/actix_web/struct.Resource.html#method.wrap).
     ///
     /// **NOTE:** This doesn't affect spec generation.
-    pub fn wrap<M>(
+    pub fn wrap<M, B>(
         self,
         mw: M,
     ) -> Resource<
@@ -165,17 +161,18 @@ where
             impl ServiceFactory<
                 ServiceRequest,
                 Config = (),
-                Response = ServiceResponse,
+                Response = ServiceResponse<B>,
                 Error = Error,
                 InitError = (),
             >,
         >,
     >
     where
+        B: MessageBody,
         M: Transform<
                 T::Service,
                 ServiceRequest,
-                Response = ServiceResponse,
+                Response = ServiceResponse<B>,
                 Error = Error,
                 InitError = (),
             > + 'static,
@@ -192,7 +189,7 @@ where
     /// Proxy for [`actix_web::web::Resource::wrap_fn`](https://docs.rs/actix-web/*/actix_web/struct.Resource.html#method.wrap_fn).
     ///
     /// **NOTE:** This doesn't affect spec generation.
-    pub fn wrap_fn<F, R>(
+    pub fn wrap_fn<F, R, B>(
         self,
         mw: F,
     ) -> Resource<
@@ -200,15 +197,16 @@ where
             impl ServiceFactory<
                 ServiceRequest,
                 Config = (),
-                Response = ServiceResponse,
+                Response = ServiceResponse<B>,
                 Error = Error,
                 InitError = (),
             >,
         >,
     >
     where
+        B: MessageBody,
         F: Fn(ServiceRequest, &T::Service) -> R + Clone + 'static,
-        R: Future<Output = Result<ServiceResponse, Error>>,
+        R: Future<Output = Result<ServiceResponse<B>, Error>>,
     {
         Resource {
             path: self.path,
@@ -244,13 +242,15 @@ where
         U: Apiv2Operation,
     {
         let mut op = U::operation();
-        op.set_parameter_names_from_path_template(&self.path);
-        for method in METHODS {
-            self.operations.insert(method.into(), op.clone());
-        }
+        if U::is_visible() {
+            op.set_parameter_names_from_path_template(&self.path);
+            for method in METHODS {
+                self.operations.insert(method.into(), op.clone());
+            }
 
-        self.definitions.extend(U::definitions().into_iter());
-        SecurityScheme::append_map(U::security_definitions(), &mut self.security);
+            self.definitions.extend(U::definitions().into_iter());
+            SecurityScheme::append_map(U::security_definitions(), &mut self.security);
+        }
     }
 }
 
@@ -452,12 +452,21 @@ where
         let mut path_map = BTreeMap::new();
         factory.update_operations(&mut path_map);
         for (path, mut map) in path_map {
-            let p = self.path.clone() + &path;
+            let p = if !self.path.ends_with('/') && !path.starts_with('/') {
+                self.path.clone() + "/" + &path
+            } else {
+                self.path.clone() + &path
+            };
             for op in map.methods.values_mut() {
                 op.set_parameter_names_from_path_template(&p);
             }
 
-            self.path_map.insert(p.clone(), map);
+            if let Some(existing) = self.path_map.get_mut(&p) {
+                existing.methods.append(&mut map.methods);
+                existing.parameters.append(&mut map.parameters);
+            } else {
+                self.path_map.insert(p.clone(), map);
+            }
         }
 
         SecurityScheme::append_map(factory.security_definitions(), &mut self.security);
@@ -555,9 +564,11 @@ impl Route {
         F::Output: Responder + 'static,
         F::Future: Apiv2Operation,
     {
-        self.operation = Some(F::Future::operation());
-        self.definitions = F::Future::definitions();
-        self.security = F::Future::security_definitions();
+        if F::Future::is_visible() {
+            self.operation = Some(F::Future::operation());
+            self.definitions = F::Future::definitions();
+            self.security = F::Future::security_definitions();
+        }
         self.inner = self.inner.to(handler);
         self
     }

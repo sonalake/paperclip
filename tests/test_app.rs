@@ -45,8 +45,8 @@ use futures::future::{ok as fut_ok, ready, Future, Ready};
 use once_cell::sync::Lazy;
 use paperclip::{
     actix::{
-        api_v2_errors, api_v2_errors_overlay, api_v2_operation, delete, get, post, put, web,
-        Apiv2Schema, Apiv2Security, CreatedJson, NoContent, OpenApiExt,
+        api_v2_errors, api_v2_errors_overlay, api_v2_operation, delete, get, patch, post, put, web,
+        Apiv2Header, Apiv2Schema, Apiv2Security, CreatedJson, NoContent, OpenApiExt,
     },
     v2::models::{DefaultApiRaw, Info, Tag},
 };
@@ -176,6 +176,11 @@ fn test_simple_app() {
         NoContent
     }
 
+    #[api_v2_operation]
+    async fn path_with_param_without_slash(_p: web::Path<u32>) -> NoContent {
+        NoContent
+    }
+
     fn config(cfg: &mut web::ServiceConfig) {
         cfg.service(web::resource("/echo").route(web::post().to(echo_pet)))
             .service(web::resource("/async_echo").route(web::post().to(echo_pet_async)))
@@ -183,7 +188,10 @@ fn test_simple_app() {
             .service(web::resource("/adopt").route(web::post().to(adopt_pet)))
             .service(web::resource("/nothing").route(web::get().to(nothing)))
             .service(web::resource("/random").to(some_pet))
-            .service(path_without_slash);
+            .service(path_without_slash)
+            .service(web::scope("/test").service(
+                web::resource("{id}").route(web::get().to(path_with_param_without_slash)),
+            ));
     }
 
     run_and_check_app(
@@ -203,13 +211,20 @@ fn test_simple_app() {
             check_json(
                 resp,
                 json!({
-                  "info":{"title":"","version":""},
                   "definitions": {
                     "Pet": {
-                      "description":"Pets are awesome!",
+                      "description": "Pets are awesome!",
                       "properties": {
+                        "birthday": {
+                          "format": "date",
+                          "type": "string"
+                        },
                         "class": {
-                          "enum": ["dog", "cat", "other"],
+                          "enum": [
+                            "dog",
+                            "cat",
+                            "other"
+                          ],
                           "type": "string"
                         },
                         "id": {
@@ -218,10 +233,6 @@ fn test_simple_app() {
                         },
                         "name": {
                           "description": "Pick a good one.",
-                          "type": "string"
-                        },
-                        "birthday": {
-                          "format": "date",
                           "type": "string"
                         },
                         "updatedOn": {
@@ -233,24 +244,24 @@ fn test_simple_app() {
                           "type": "string"
                         }
                       },
-                      "required":["birthday", "class", "name"],
-                      "type":"object"
+                      "required": [
+                        "birthday",
+                        "class",
+                        "name"
+                      ],
+                      "type": "object"
                     }
                   },
+                  "info": {
+                    "title": "",
+                    "version": ""
+                  },
                   "paths": {
-                    "/api/echo": {
-                    "post": {
-                        "parameters": [{
-                            "in": "body",
-                            "name": "body",
-                            "required": true,
-                            "schema": {
-                            "$ref": "#/definitions/Pet"
-                            }
-                        }],
+                    "/api/adopt": {
+                      "post": {
                         "responses": {
-                          "200": {
-                            "description": "OK",
+                          "201": {
+                            "description": "Created",
                             "schema": {
                               "$ref": "#/definitions/Pet"
                             }
@@ -260,14 +271,16 @@ fn test_simple_app() {
                     },
                     "/api/async_echo": {
                       "post": {
-                        "parameters": [{
+                        "parameters": [
+                          {
                             "in": "body",
                             "name": "body",
                             "required": true,
                             "schema": {
                               "$ref": "#/definitions/Pet"
                             }
-                          }],
+                          }
+                        ],
                         "responses": {
                           "200": {
                             "description": "OK",
@@ -280,20 +293,62 @@ fn test_simple_app() {
                     },
                     "/api/async_echo_2": {
                       "post": {
-                        "parameters": [{
+                        "parameters": [
+                          {
                             "in": "body",
                             "name": "body",
                             "required": true,
                             "schema": {
                               "$ref": "#/definitions/Pet"
                             }
-                          }],
+                          }
+                        ],
                         "responses": {
                           "200": {
                             "description": "OK",
                             "schema": {
                               "$ref": "#/definitions/Pet"
                             }
+                          }
+                        }
+                      }
+                    },
+                    "/api/echo": {
+                      "post": {
+                        "parameters": [
+                          {
+                            "in": "body",
+                            "name": "body",
+                            "required": true,
+                            "schema": {
+                              "$ref": "#/definitions/Pet"
+                            }
+                          }
+                        ],
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "$ref": "#/definitions/Pet"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "/api/no-slash": {
+                      "post": {
+                        "responses": {
+                          "204": {
+                            "description": "No Content"
+                          }
+                        }
+                      }
+                    },
+                    "/api/nothing": {
+                      "get": {
+                        "responses": {
+                          "204": {
+                            "description": "No Content"
                           }
                         }
                       }
@@ -370,29 +425,17 @@ fn test_simple_app() {
                         }
                       }
                     },
-                    "/api/adopt": {
-                      "post": {
-                        "responses": {
-                          "201": {
-                            "description": "Created",
-                            "schema": {
-                              "$ref": "#/definitions/Pet"
-                            }
-                          }
-                        }
-                      }
-                    },
-                    "/api/nothing": {
+                    "/api/test/{id}": {
                       "get": {
-                        "responses": {
-                          "204": {
-                            "description": "No Content"
+                        "parameters": [
+                          {
+                            "format": "int32",
+                            "in": "path",
+                            "name": "id",
+                            "required": true,
+                            "type": "integer"
                           }
-                        }
-                      }
-                    },
-                    "/api/no-slash": {
-                      "post": {
+                        ],
                         "responses": {
                           "204": {
                             "description": "No Content"
@@ -1265,6 +1308,9 @@ fn test_map_in_out() {
             #[cfg(feature = "swagger-ui")]
             let app = app.with_swagger_ui_at("/swagger");
 
+            #[cfg(feature = "rapidoc")]
+            let app = app.with_swagger_ui_at("/rapidoc");
+
             app.service(web::resource("/images").route(web::get().to(some_images)))
                 .service(web::resource("/catalogue").route(web::post().to(catalogue)))
                 .build()
@@ -1400,6 +1446,16 @@ fn test_map_in_out() {
 
                 assert_eq!(resp.status().as_u16(), 200);
             }
+
+            #[cfg(feature = "rapidoc")]
+            {
+                let resp = CLIENT
+                    .get(&format!("http://{}/rapidoc", addr))
+                    .send()
+                    .expect("request failed?");
+
+                assert_eq!(resp.status().as_u16(), 200);
+            }
         },
     );
 }
@@ -1447,10 +1503,54 @@ fn test_serde_flatten() {
         name: Option<String>,
     }
 
+    /// Image author info
+    #[derive(Deserialize, Apiv2Schema)]
+    struct Author {
+        name: String,
+        address: Option<String>,
+        age: Option<u8>,
+    }
+
+    /// Image to persist
+    #[derive(Deserialize, Apiv2Schema)]
+    struct ImagePayload {
+        data: String,
+        id: Uuid,
+        #[serde(flatten)]
+        author: Author,
+    }
+
+    /// Article to persist
+    #[derive(Deserialize, Apiv2Schema)]
+    struct Article {
+        description: String,
+        id: Uuid,
+        #[serde(flatten)]
+        author: Option<Author>,
+    }
+
     #[api_v2_operation]
     async fn some_images(_filter: web::Query<ImagesQuery>) -> Result<web::Json<Images>, Error> {
         #[allow(unreachable_code)]
         if _filter.paging.offset.is_some() && _filter.name.is_some() {
+            unimplemented!()
+        }
+        unimplemented!()
+    }
+
+    #[api_v2_operation]
+    async fn add_images(_content: web::Json<ImagePayload>) -> Result<NoContent, Error> {
+        #[allow(unreachable_code)]
+        if _content.author.address.is_some() {
+            unimplemented!()
+        }
+        unimplemented!()
+    }
+
+    #[api_v2_operation]
+    async fn add_article(_content: web::Json<Article>) -> Result<NoContent, Error> {
+        #[allow(unreachable_code)]
+        if _content.author.is_some() {
             unimplemented!()
         }
         unimplemented!()
@@ -1461,7 +1561,12 @@ fn test_serde_flatten() {
             App::new()
                 .wrap_api()
                 .with_json_spec_at("/api/spec")
-                .service(web::resource("/images").route(web::get().to(some_images)))
+                .service(
+                    web::resource("/images")
+                        .route(web::get().to(some_images))
+                        .route(web::post().to(add_images)),
+                )
+                .service(web::resource("/article").route(web::get().to(add_article)))
                 .build()
         },
         |addr| {
@@ -1473,7 +1578,62 @@ fn test_serde_flatten() {
             check_json(
                 resp,
                 json!({
-                    "definitions": {
+                      "definitions": {
+                        "Article": {
+                          "description": "Article to persist",
+                          "properties": {
+                            "address": {
+                              "type": "string"
+                            },
+                            "age": {
+                              "format": "int32",
+                              "type": "integer"
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "format": "uuid",
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "description",
+                            "id"
+                          ],
+                          "type": "object"
+                        },
+                        "ImagePayload": {
+                          "description": "Image to persist",
+                          "properties": {
+                            "address": {
+                              "type": "string"
+                            },
+                            "age": {
+                              "format": "int32",
+                              "type": "integer"
+                            },
+                            "data": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "format": "uuid",
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "data",
+                            "id",
+                            "name"
+                          ],
+                          "type": "object"
+                        },
                         "Images": {
                           "description": "Images response with paging information embedded",
                           "properties": {
@@ -1497,7 +1657,7 @@ fn test_serde_flatten() {
                                   "id",
                                   "time"
                                 ],
-                                 "type":"object"
+                                "type": "object"
                               },
                               "type": "array"
                             },
@@ -1519,9 +1679,11 @@ fn test_serde_flatten() {
                           },
                           "required": [
                             "data",
-                            "paging"
+                            "offset",
+                            "size",
+                            "total"
                           ],
-                          "type":"object"
+                          "type": "object"
                         }
                       },
                       "info": {
@@ -1529,6 +1691,25 @@ fn test_serde_flatten() {
                         "version": ""
                       },
                       "paths": {
+                        "/article": {
+                          "get": {
+                            "parameters": [
+                              {
+                                "in": "body",
+                                "name": "body",
+                                "required": true,
+                                "schema": {
+                                  "$ref": "#/definitions/Article"
+                                }
+                              }
+                            ],
+                            "responses": {
+                              "204": {
+                                "description": "No Content"
+                              }
+                            }
+                          }
+                        },
                         "/images": {
                           "get": {
                             "parameters": [
@@ -1558,6 +1739,23 @@ fn test_serde_flatten() {
                                 "schema": {
                                   "$ref": "#/definitions/Images"
                                 }
+                              }
+                            }
+                          },
+                          "post": {
+                            "parameters": [
+                              {
+                                "in": "body",
+                                "name": "body",
+                                "required": true,
+                                "schema": {
+                                  "$ref": "#/definitions/ImagePayload"
+                                }
+                              }
+                            ],
+                            "responses": {
+                              "204": {
+                                "description": "No Content"
                               }
                             }
                           }
@@ -2261,6 +2459,16 @@ fn test_operations_documentation() {
         limit: Option<u16>,
     }
 
+    #[derive(Serialize, Deserialize, Apiv2Schema)]
+    struct Dog {
+        name: String,
+    }
+
+    #[derive(Serialize, Deserialize, Apiv2Schema)]
+    struct InvisibleDog {
+        name: String,
+    }
+
     /// List all pets
     ///
     /// Will provide list of all pets available for sale
@@ -2292,6 +2500,16 @@ fn test_operations_documentation() {
         Pet::default()
     }
 
+    #[api_v2_operation(description = "An invisible dog handler", skip)]
+    fn get_dogs() -> impl Future<Output = Result<web::Json<Vec<InvisibleDog>>, Error>> {
+        futures::future::err(actix_web::error::ErrorInternalServerError(""))
+    }
+
+    #[api_v2_operation(description = "A visible dog handler")]
+    fn get_dog() -> impl Future<Output = Result<web::Json<Dog>, Error>> {
+        futures::future::err(actix_web::error::ErrorInternalServerError(""))
+    }
+
     run_and_check_app(
         || {
             App::new()
@@ -2300,6 +2518,14 @@ fn test_operations_documentation() {
                 .service(web::resource("/").route(web::get().to(index)))
                 .service(web::resource("/pets").route(web::get().to(get_pets)))
                 .service(web::resource("/pet").route(web::get().to(get_pet)))
+                .service(web::resource("/dog").route(web::get().to(get_dogs)))
+                .service(
+                    web::scope("/dogs")
+                        .service(web::resource("").route(web::get().to(get_dogs)))
+                        .service(web::resource("{id}").route(web::get().to(get_dog)))
+                        .service(web::resource("{id}/another").to(get_dogs))
+                        .service(web::resource("{id}/another-visible").to(get_dog)),
+                )
                 .service(web::resource("/pet_async").route(web::get().to(get_pet_async)))
                 .build()
         },
@@ -2312,13 +2538,31 @@ fn test_operations_documentation() {
             check_json(
                 resp,
                 json!({
-                  "info":{"title":"","version":""},
                   "definitions": {
+                    "Dog": {
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "type": "object"
+                    },
                     "Pet": {
                       "description": "Pets are awesome!",
                       "properties": {
+                        "birthday": {
+                          "format": "date",
+                          "type": "string"
+                        },
                         "class": {
-                          "enum": ["dog", "cat", "other"],
+                          "enum": [
+                            "dog",
+                            "cat",
+                            "other"
+                          ],
                           "type": "string"
                         },
                         "id": {
@@ -2327,10 +2571,6 @@ fn test_operations_documentation() {
                         },
                         "name": {
                           "description": "Pick a good one.",
-                          "type": "string"
-                        },
-                        "birthday": {
-                          "format": "date",
                           "type": "string"
                         },
                         "updatedOn": {
@@ -2342,51 +2582,153 @@ fn test_operations_documentation() {
                           "type": "string"
                         }
                       },
-                      "required":["birthday", "class", "name"],
-                      "type":"object"
+                      "required": [
+                        "birthday",
+                        "class",
+                        "name"
+                      ],
+                      "type": "object"
                     }
+                  },
+                  "info": {
+                    "title": "",
+                    "version": ""
                   },
                   "paths": {
                     "/": {
                       "get": {
                         "responses": {},
-                        "summary":"Index call"
+                        "summary": "Index call"
                       }
                     },
-                    "/pets": {
+                    "/dogs/{id}": {
                       "get": {
-                        "description":"Will provide list of all pets available for sale",
+                        "description": "A visible dog handler",
                         "responses": {
                           "200": {
                             "description": "OK",
                             "schema": {
-                              "type": "array",
-                              "items": {
-                                "$ref": "#/definitions/Pet"
-                              }
+                              "$ref": "#/definitions/Dog"
                             }
                           }
-                        },
-                        "summary":"List all pets",
-                        "parameters": [{
-                            "format": "int32",
-                            "in": "query",
-                            "name": "limit",
-                            "type": "integer"
-                        }]
+                        }
+                      }
+                    },
+                    "/dogs/{id}/another-visible": {
+                      "delete": {
+                        "description": "A visible dog handler",
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "$ref": "#/definitions/Dog"
+                            }
+                          }
+                        }
                       },
+                      "get": {
+                        "description": "A visible dog handler",
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "$ref": "#/definitions/Dog"
+                            }
+                          }
+                        }
+                      },
+                      "head": {
+                        "description": "A visible dog handler",
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "$ref": "#/definitions/Dog"
+                            }
+                          }
+                        }
+                      },
+                      "options": {
+                        "description": "A visible dog handler",
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "$ref": "#/definitions/Dog"
+                            }
+                          }
+                        }
+                      },
+                      "patch": {
+                        "description": "A visible dog handler",
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "$ref": "#/definitions/Dog"
+                            }
+                          }
+                        }
+                      },
+                      "post": {
+                        "description": "A visible dog handler",
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "$ref": "#/definitions/Dog"
+                            }
+                          }
+                        }
+                      },
+                      "put": {
+                        "description": "A visible dog handler",
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "$ref": "#/definitions/Dog"
+                            }
+                          }
+                        }
+                      }
                     },
                     "/pet": {
                       "get": {
                         "responses": {},
-                        "summary":"Get pet info sync version"
+                        "summary": "Get pet info sync version"
                       }
                     },
                     "/pet_async": {
                       "get": {
+                        "description": "Will provide details on a pet",
                         "responses": {},
-                        "description":"Will provide details on a pet",
-                        "summary":"Get pet info"
+                        "summary": "Get pet info"
+                      }
+                    },
+                    "/pets": {
+                      "get": {
+                        "description": "Will provide list of all pets available for sale",
+                        "parameters": [
+                          {
+                            "format": "int32",
+                            "in": "query",
+                            "name": "limit",
+                            "type": "integer"
+                          }
+                        ],
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "items": {
+                                "$ref": "#/definitions/Pet"
+                              },
+                              "type": "array"
+                            }
+                          }
+                        },
+                        "summary": "List all pets"
                       }
                     }
                   },
@@ -2408,7 +2750,8 @@ fn test_operations_macro_attributes() {
         description = "Provides an empty value in response",
         operation_id = "getIndex",
         consumes = "application/json, text/plain",
-        produces = "text/plain"
+        produces = "text/plain",
+        deprecated
     )]
     fn index() -> impl Responder {
         ""
@@ -2422,6 +2765,7 @@ fn test_operations_macro_attributes() {
     /// List all pets (in summary)
     ///
     /// This doc comment will be used in description
+    #[deprecated(since = "1.0")]
     #[api_v2_operation(operation_id = "getPets")]
     fn get_pets(
         _data: web::Data<String>,
@@ -2435,13 +2779,54 @@ fn test_operations_macro_attributes() {
         futures::future::err(actix_web::error::ErrorInternalServerError(""))
     }
 
+    /// List all pets (in summary)
+    ///
+    /// This doc comment will be used in description
+    #[api_v2_operation(operation_id = "getDogs")]
+    #[deprecated]
+    fn get_dogs(
+        _data: web::Data<String>,
+        _q: web::Query<Params>,
+    ) -> impl Future<Output = Result<web::Json<Vec<Pet>>, Error>> {
+        if true {
+            // test for return in wrapper blocks (#75)
+            return futures::future::err(actix_web::error::ErrorInternalServerError(""));
+        }
+
+        futures::future::err(actix_web::error::ErrorInternalServerError(""))
+    }
+
+    #[derive(Serialize, Deserialize, Apiv2Schema)]
+    pub struct Car {
+        brand: String,
+    }
+
+    /// List all cars (in summary)
+    ///
+    /// This route will not appear in openapi.json
+    #[api_v2_operation(skip)]
+    fn get_cars(
+        _data: web::Data<String>,
+        _q: web::Query<Params>,
+    ) -> impl Future<Output = Result<web::Json<Vec<Car>>, Error>> {
+        if true {
+            // test for return in wrapper blocks (#75)
+            return futures::future::err(actix_web::error::ErrorInternalServerError(""));
+        }
+
+        futures::future::err(actix_web::error::ErrorInternalServerError(""))
+    }
+
     run_and_check_app(
         || {
+            #[allow(deprecated)]
             App::new()
                 .wrap_api()
                 .with_json_spec_at("/api/spec")
                 .service(web::resource("/").route(web::get().to(index)))
                 .service(web::resource("/pets").route(web::get().to(get_pets)))
+                .service(web::resource("/dogs").route(web::get().to(get_dogs)))
+                .service(web::resource("/cars").route(web::get().to(get_cars)))
                 .build()
         },
         |addr| {
@@ -2453,87 +2838,124 @@ fn test_operations_macro_attributes() {
             check_json(
                 resp,
                 json!({
-                    "definitions": {
-                        "Pet": {
-                            "description": "Pets are awesome!",
-                            "properties": {
-                                "class": {
-                                "enum": ["dog", "cat", "other"],
-                                    "type":"string"
-                                },
-                                "id": {
-                                    "format": "int64",
-                                    "type": "integer"
-                                },
-                                "name": {
-                                    "description": "Pick a good one.",
-                                    "type": "string"
-                                },
-                                "birthday": {
-                                  "format": "date",
-                                  "type": "string"
-                                },
-                                "updatedOn": {
-                                    "format": "date-time",
-                                    "type": "string"
-                                },
-                                "uuid":{
-                                    "format": "uuid",
-                                    "type": "string"
-                                }
-                            },
-                            "required":[
-                                "birthday",
-                                "class",
-                                "name"
-                            ],
-                            "type":"object"
-                        }
-                    },
-                    "info": {
-                        "title":"",
-                        "version":""
-                    },
-                    "paths": {
-                        "/": {
-                            "get": {
-                                "consumes": [
-                                    "application/json",
-                                    "text/plain"
-                                ],
-                                "description": "Provides an empty value in response",
-                                "operationId": "getIndex",
-                                "produces": [ "text/plain" ],
-                                "responses": {},
-                                "summary": "Root"
-                            }
+                  "definitions": {
+                    "Pet": {
+                      "description": "Pets are awesome!",
+                      "properties": {
+                        "birthday": {
+                          "format": "date",
+                          "type": "string"
                         },
-                        "/pets": {
-                            "get": {
-                                "description": "This doc comment will be used in description",
-                                "operationId": "getPets",
-                                "parameters":[{
-                                    "format":"int32",
-                                    "in":"query",
-                                    "name":"limit",
-                                    "type":"integer"
-                                }],
-                                "responses": {
-                                "200": {
-                                    "description": "OK",
-                                    "schema": {
-                                        "items": {
-                                            "$ref": "#/definitions/Pet"
-                                        },
-                                        "type": "array"
-                                    }
-                                }
-                                },
-                                "summary": "List all pets (in summary)"
-                            }
+                        "class": {
+                          "enum": [
+                            "dog",
+                            "cat",
+                            "other"
+                          ],
+                          "type": "string"
+                        },
+                        "id": {
+                          "format": "int64",
+                          "type": "integer"
+                        },
+                        "name": {
+                          "description": "Pick a good one.",
+                          "type": "string"
+                        },
+                        "updatedOn": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "uuid": {
+                          "format": "uuid",
+                          "type": "string"
                         }
+                      },
+                      "required": [
+                        "birthday",
+                        "class",
+                        "name"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "info": {
+                    "title": "",
+                    "version": ""
+                  },
+                  "paths": {
+                    "/": {
+                      "get": {
+                        "consumes": [
+                          "application/json",
+                          "text/plain"
+                        ],
+                        "deprecated": true,
+                        "description": "Provides an empty value in response",
+                        "operationId": "getIndex",
+                        "produces": [
+                          "text/plain"
+                        ],
+                        "responses": {},
+                        "summary": "Root"
+                      }
                     },
-                    "swagger": "2.0"
+                    "/dogs": {
+                      "get": {
+                        "deprecated": true,
+                        "description": "This doc comment will be used in description",
+                        "operationId": "getDogs",
+                        "parameters": [
+                          {
+                            "format": "int32",
+                            "in": "query",
+                            "name": "limit",
+                            "type": "integer"
+                          }
+                        ],
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "items": {
+                                "$ref": "#/definitions/Pet"
+                              },
+                              "type": "array"
+                            }
+                          }
+                        },
+                        "summary": "List all pets (in summary)"
+                      }
+                    },
+                    "/pets": {
+                      "get": {
+                        "deprecated": true,
+                        "description": "This doc comment will be used in description",
+                        "operationId": "getPets",
+                        "parameters": [
+                          {
+                            "format": "int32",
+                            "in": "query",
+                            "name": "limit",
+                            "type": "integer"
+                          }
+                        ],
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "items": {
+                                "$ref": "#/definitions/Pet"
+                              },
+                              "type": "array"
+                            }
+                          }
+                        },
+                        "summary": "List all pets (in summary)"
+                      }
+                    }
+                  },
+                  "swagger": "2.0"
                 }),
             );
         },
@@ -3153,6 +3575,195 @@ fn test_security_app() {
 }
 
 #[test]
+fn test_header_parameter_app() {
+    #[derive(Apiv2Header, Deserialize)]
+    struct RequestHeaders {
+        #[openapi(name = "X-Request-ID", description = "Allow to track request")]
+        request_id: Uuid,
+        #[openapi(description = "User organization slug")]
+        slug: String,
+        #[openapi(description = "User ip", format = "ip")]
+        request_ip: String,
+        /// Origin of the request
+        origin: String,
+        #[openapi(skip)]
+        another_field: String,
+    }
+
+    impl FromRequest for RequestHeaders {
+        type Error = Error;
+        type Future = Ready<Result<Self, Self::Error>>;
+        #[cfg(not(feature = "actix4"))]
+        type Config = ();
+
+        fn from_request(_: &HttpRequest, _payload: &mut actix_web::dev::Payload) -> Self::Future {
+            ready(Ok(Self {
+                request_id: Uuid::default(),
+                slug: "abc".to_owned(),
+                request_ip: "127.1".to_owned(),
+                origin: "test.com".to_owned(),
+                another_field: "".to_owned(),
+            }))
+        }
+    }
+
+    #[derive(Apiv2Header, Deserialize)]
+    struct RefererHeader(#[openapi(name = "X-Referer-slug")] String);
+
+    impl FromRequest for RefererHeader {
+        type Error = Error;
+        type Future = Ready<Result<Self, Self::Error>>;
+        #[cfg(not(feature = "actix4"))]
+        type Config = ();
+
+        fn from_request(_: &HttpRequest, _payload: &mut actix_web::dev::Payload) -> Self::Future {
+            ready(Ok(Self("www.paperclip.rs".to_owned())))
+        }
+    }
+
+    #[api_v2_operation]
+    async fn echo_pet_with_headers(
+        _: RequestHeaders,
+        _: RefererHeader,
+        body: web::Json<Pet>,
+    ) -> web::Json<Pet> {
+        body
+    }
+
+    fn config(cfg: &mut web::ServiceConfig) {
+        cfg.service(web::resource("/echo").route(web::post().to(echo_pet_with_headers)));
+    }
+
+    run_and_check_app(
+        move || {
+            App::new()
+                .wrap_api()
+                .service(web::scope("/api").configure(config))
+                .with_json_spec_at("/spec")
+                .build()
+        },
+        |addr| {
+            let resp = CLIENT
+                .get(&format!("http://{}/spec", addr))
+                .send()
+                .expect("request failed?");
+
+            check_json(
+                resp,
+                json!({
+                  "definitions": {
+                    "Pet": {
+                      "description": "Pets are awesome!",
+                      "properties": {
+                        "birthday": {
+                          "format": "date",
+                          "type": "string"
+                        },
+                        "class": {
+                          "enum": [
+                            "dog",
+                            "cat",
+                            "other"
+                          ],
+                          "type": "string"
+                        },
+                        "id": {
+                          "format": "int64",
+                          "type": "integer"
+                        },
+                        "name": {
+                          "description": "Pick a good one.",
+                          "type": "string"
+                        },
+                        "updatedOn": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "uuid": {
+                          "format": "uuid",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "birthday",
+                        "class",
+                        "name"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "info": {
+                    "title": "",
+                    "version": ""
+                  },
+                  "paths": {
+                    "/api/echo": {
+                      "post": {
+                        "parameters": [
+                          {
+                            "description": "Allow to track request",
+                            "format": "uuid",
+                            "in": "header",
+                            "name": "X-Request-ID",
+                            "required": true,
+                            "type": "string"
+                          },
+                          {
+                            "description": "User organization slug",
+                            "in": "header",
+                            "name": "slug",
+                            "required": true,
+                            "type": "string"
+                          },
+                          {
+                            "description": "User ip",
+                            "format": "ip",
+                            "in": "header",
+                            "name": "request_ip",
+                            "required": true,
+                            "type": "string"
+                          },
+                          {
+                            "description": "Origin of the request",
+                            "in": "header",
+                            "name": "origin",
+                            "required": true,
+                            "type": "string"
+                          },
+                          {
+                            "in": "header",
+                            "name": "X-Referer-slug",
+                            "required": true,
+                            "type": "string"
+                          },
+                          {
+                            "in": "body",
+                            "name": "body",
+                            "required": true,
+                            "schema": {
+                              "$ref": "#/definitions/Pet"
+                            }
+                          }
+                        ],
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "$ref": "#/definitions/Pet"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "swagger": "2.0"
+                }),
+            );
+        },
+    );
+}
+
+#[test]
 fn test_method_macro() {
     #[get("/v0/pets")]
     #[api_v2_operation]
@@ -3162,6 +3773,14 @@ fn test_method_macro() {
     #[put("/v0/pets/{name}")]
     #[api_v2_operation]
     fn put_pet(
+        _name: web::Path<String>,
+        pet: web::Json<Pet>,
+    ) -> impl Future<Output = Result<web::Json<Pet>, Error>> {
+        futures::future::ready(Ok(pet))
+    }
+    #[patch("/v0/pets/{name}")]
+    #[api_v2_operation]
+    fn patch_pet(
         _name: web::Path<String>,
         pet: web::Json<Pet>,
     ) -> impl Future<Output = Result<web::Json<Pet>, Error>> {
@@ -3185,6 +3804,7 @@ fn test_method_macro() {
                 .with_json_spec_at("/api/spec")
                 .service(get_pets)
                 .service(put_pet)
+                .service(patch_pet)
                 .service(post_pet)
                 .service(delete_pet)
                 .build()
@@ -3241,6 +3861,211 @@ fn test_method_macro() {
                     },
                     "paths": {
                         "/v0/pets": {
+                            "get": {
+                                "responses": {
+                                    "200": {
+                                        "description": "OK",
+                                        "schema": {
+                                            "items": {
+                                                "$ref": "#/definitions/Pet"
+                                            },
+                                            "type": "array"
+                                        }
+                                    }
+                                },
+                            },
+                            "post": {
+                                "parameters": [
+                                    {
+                                        "in": "body",
+                                        "name": "body",
+                                        "required": true,
+                                        "schema": {
+                                            "$ref": "#/definitions/Pet"
+                                        }
+                                    }
+                                ],
+                                "responses": {
+                                    "200": {
+                                        "description": "OK",
+                                        "schema": {
+                                            "$ref": "#/definitions/Pet"
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                        "/v0/pets/{name}": {
+                            "delete": {
+                                "parameters": [
+                                    {
+                                        "in": "path",
+                                        "name": "name",
+                                        "required": true,
+                                        "type": "string"
+                                    },
+                                ],
+                                "responses": {
+                                    "200": {
+                                        "description": "OK",
+                                        "schema": {
+                                        }
+                                    }
+                                },
+                            },
+                            "put": {
+                                "parameters": [
+                                    {
+                                        "in": "path",
+                                        "name": "name",
+                                        "required": true,
+                                        "type": "string"
+                                    },
+                                    {
+                                        "in": "body",
+                                        "name": "body",
+                                        "required": true,
+                                        "schema": {
+                                            "$ref": "#/definitions/Pet"
+                                        }
+                                    }
+                                ],
+                                "responses": {
+                                    "200": {
+                                        "description": "OK",
+                                        "schema": {
+                                            "$ref": "#/definitions/Pet"
+                                        }
+                                    }
+                                },
+                            },
+                            "patch": {
+                                "parameters": [
+                                    {
+                                        "in": "path",
+                                        "name": "name",
+                                        "required": true,
+                                        "type": "string"
+                                    },
+                                    {
+                                        "in": "body",
+                                        "name": "body",
+                                        "required": true,
+                                        "schema": {
+                                            "$ref": "#/definitions/Pet"
+                                        }
+                                    }
+                                ],
+                                "responses": {
+                                    "200": {
+                                        "description": "OK",
+                                        "schema": {
+                                            "$ref": "#/definitions/Pet"
+                                        }
+                                    }
+                                },
+                            }
+                        }
+                    },
+                    "swagger": "2.0"
+                }),
+            );
+        },
+    );
+}
+
+#[test]
+fn test_method_macro_subscope() {
+    #[get("")]
+    #[api_v2_operation]
+    fn get_pets() -> impl Future<Output = Result<web::Json<Vec<Pet>>, Error>> {
+        futures::future::ready(Ok(web::Json(Default::default())))
+    }
+    #[put("/{name}")]
+    #[api_v2_operation]
+    fn put_pet(
+        _name: web::Path<String>,
+        pet: web::Json<Pet>,
+    ) -> impl Future<Output = Result<web::Json<Pet>, Error>> {
+        futures::future::ready(Ok(pet))
+    }
+    #[post("")]
+    #[api_v2_operation]
+    fn post_pet(pet: web::Json<Pet>) -> impl Future<Output = Result<web::Json<Pet>, Error>> {
+        futures::future::ready(Ok(pet))
+    }
+    #[delete("/{name}")]
+    #[api_v2_operation]
+    fn delete_pet(_name: web::Path<String>) -> impl Future<Output = Result<web::Json<()>, Error>> {
+        futures::future::ready(Ok(web::Json(())))
+    }
+
+    run_and_check_app(
+        || {
+            App::new()
+                .wrap_api()
+                .with_json_spec_at("/api/spec")
+                .service(
+                    web::scope("/v0/pets")
+                        .service(get_pets)
+                        .service(put_pet)
+                        .service(post_pet)
+                        .service(delete_pet),
+                )
+                .build()
+        },
+        |addr| {
+            let resp = CLIENT
+                .get(&format!("http://{}/api/spec", addr))
+                .send()
+                .expect("request failed?");
+
+            check_json(
+                resp,
+                json!({
+                    "definitions": {
+                        "Pet": {
+                            "description": "Pets are awesome!",
+                            "properties": {
+                                "class": {
+                                "enum": ["dog", "cat", "other"],
+                                    "type":"string"
+                                },
+                                "id": {
+                                    "format": "int64",
+                                    "type": "integer"
+                                },
+                                "name": {
+                                    "description": "Pick a good one.",
+                                    "type": "string"
+                                },
+                                "birthday": {
+                                  "format": "date",
+                                  "type": "string"
+                                },
+                                "updatedOn": {
+                                    "format": "date-time",
+                                    "type": "string"
+                                },
+                                "uuid":{
+                                    "format": "uuid",
+                                    "type": "string"
+                                }
+                            },
+                            "required":[
+                                "birthday",
+                                "class",
+                                "name"
+                            ],
+                            "type":"object"
+                        }
+                    },
+                    "info": {
+                        "title":"",
+                        "version":""
+                    },
+                    "paths": {
+                        "/v0/pets/": {
                             "get": {
                                 "responses": {
                                     "200": {
@@ -3542,6 +4367,134 @@ fn test_rename() {
     );
 }
 
+#[test]
+fn test_example() {
+    #[derive(Deserialize, Serialize, Apiv2Schema)]
+    #[openapi(example = r#"{ "name": "Rex", "age": 8 }"#)]
+    /// Pets are awesome!
+    struct Pet {
+        /// Pick a good one.
+        name: String,
+        /// 7 time yours
+        age: u8,
+    }
+
+    #[derive(Deserialize, Serialize, Apiv2Schema)]
+    struct Car {
+        /// Pick a good one.
+        #[openapi(example = "whatever")]
+        name: String,
+    }
+
+    #[api_v2_operation]
+    fn echo_pets() -> impl Future<Output = Result<web::Json<Vec<Pet>>, Error>> {
+        fut_ok(web::Json(vec![]))
+    }
+
+    #[api_v2_operation]
+    fn echo_cars() -> impl Future<Output = Result<web::Json<Vec<Car>>, Error>> {
+        fut_ok(web::Json(vec![]))
+    }
+
+    run_and_check_app(
+        || {
+            App::new()
+                .wrap_api()
+                .route("/pets", web::get().to(echo_pets))
+                .route("/cars", web::get().to(echo_cars))
+                .with_json_spec_at("/api/spec")
+                .build()
+        },
+        |addr| {
+            let resp = CLIENT
+                .get(&format!("http://{}/api/spec", addr))
+                .send()
+                .expect("request failed?");
+
+            check_json(
+                resp,
+                json!({
+                  "definitions": {
+                    "Car": {
+                      "properties": {
+                        "name": {
+                          "description": "Pick a good one.",
+                          "example": "whatever",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "Pet": {
+                      "description": "Pets are awesome!",
+                      "example": {
+                        "age": 8,
+                        "name": "Rex"
+                      },
+                      "properties": {
+                        "age": {
+                          "description": "7 time yours",
+                          "format": "int32",
+                          "type": "integer"
+                        },
+                        "name": {
+                          "description": "Pick a good one.",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "age",
+                        "name"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "info": {
+                    "title": "",
+                    "version": ""
+                  },
+                  "paths": {
+                    "/cars": {
+                      "get": {
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "items": {
+                                "$ref": "#/definitions/Car"
+                              },
+                              "type": "array"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "/pets": {
+                      "get": {
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "items": {
+                                "$ref": "#/definitions/Pet"
+                              },
+                              "type": "array"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "swagger": "2.0"
+                }),
+            );
+        },
+    );
+}
+
 mod module_path_in_definition_name {
     pub mod foo {
         pub mod bar {
@@ -3560,6 +4513,22 @@ mod module_path_in_definition_name {
             }
         }
     }
+}
+
+#[test]
+fn test_schema_with_r_literals() {
+    use paperclip::v2::schema::Apiv2Schema;
+    #[derive(paperclip::actix::Apiv2Schema, Deserialize, Serialize)]
+    pub(crate) struct Dog {
+        /// The voice that we love and hate
+        pub(crate) r#bark: String,
+    }
+
+    let dog = Dog::raw_schema();
+    assert_eq!(
+        "bark",
+        dog.properties.iter().next().map(|(k, v)| k).unwrap()
+    );
 }
 
 #[test]
@@ -3716,7 +4685,7 @@ fn test_schema_with_generics() {
                                         "name": "body",
                                         "required": true,
                                         "schema": {
-                                            "$ref": "#/definitions/Pet<Cat>",
+                                            "$ref": "#/definitions/Pet%3CCat%3E",
                                         },
                                     },
                                 ],
@@ -3724,7 +4693,7 @@ fn test_schema_with_generics() {
                                     "200": {
                                         "description": "OK",
                                         "schema": {
-                                            "$ref": "#/definitions/Pet<Cat>",
+                                            "$ref": "#/definitions/Pet%3CCat%3E",
                                         },
                                     },
                                 },
@@ -3738,7 +4707,7 @@ fn test_schema_with_generics() {
                                         "name": "body",
                                         "required": true,
                                         "schema": {
-                                            "$ref": "#/definitions/Pet<Dog>",
+                                            "$ref": "#/definitions/Pet%3CDog%3E",
                                         },
                                     },
                                 ],
@@ -3746,7 +4715,7 @@ fn test_schema_with_generics() {
                                     "200": {
                                         "description": "OK",
                                         "schema": {
-                                            "$ref": "#/definitions/Pet<Dog>",
+                                            "$ref": "#/definitions/Pet%3CDog%3E",
                                         },
                                     },
                                 },
@@ -3979,6 +4948,93 @@ fn test_ipvx() {
                         }
                     },
                     "swagger": "2.0"
+                }),
+            );
+        },
+    );
+}
+
+#[cfg(any(feature = "actix3", feature = "actix4"))]
+#[test]
+fn test_wrap() {
+    #[cfg(not(feature = "actix4"))]
+    extern crate actix_web_httpauth3 as actix_web_httpauth;
+    #[cfg(feature = "actix4")]
+    extern crate actix_web_httpauth4 as actix_web_httpauth;
+
+    #[derive(Deserialize, Serialize, Apiv2Schema)]
+    #[serde(rename_all = "camelCase")]
+    /// Pets are awesome!
+    struct Pet {
+        /// Pick a good one.
+        name: String,
+    }
+
+    #[api_v2_operation]
+    fn echo_pets() -> impl Future<Output = Result<web::Json<Vec<Pet>>, Error>> {
+        fut_ok(web::Json(vec![]))
+    }
+
+    run_and_check_app(
+        || {
+            App::new()
+                .wrap_api()
+                .service(
+                    web::resource("/pets")
+                        .wrap(actix_web_httpauth::middleware::HttpAuthentication::bearer(
+                            |req, _credentials| async { Ok(req) },
+                        ))
+                        .route(web::get().to(echo_pets)),
+                )
+                .with_json_spec_at("/api/spec")
+                .build()
+        },
+        |addr| {
+            let resp = CLIENT
+                .get(&format!("http://{}/api/spec", addr))
+                .send()
+                .expect("request failed?");
+
+            check_json(
+                resp,
+                json!({
+                  "definitions": {
+                    "Pet": {
+                      "description": "Pets are awesome!",
+                      "properties": {
+                        "name": {
+                          "description": "Pick a good one.",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "info": {
+                    "title": "",
+                    "version": ""
+                  },
+                  "paths": {
+                    "/pets": {
+                      "get": {
+                        "responses": {
+                          "200": {
+                            "description": "OK",
+                            "schema": {
+                              "items": {
+                                "$ref": "#/definitions/Pet"
+                              },
+                              "type": "array"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "swagger": "2.0"
                 }),
             );
         },

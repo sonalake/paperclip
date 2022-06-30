@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- Add support for `PATCH` methods. [PR#422](https://github.com/paperclip-rs/paperclip/pull/422)
+- Add support for header parameters through the newly introduced `Apiv2Header` derive macro. [PR#413](https://github.com/paperclip-rs/paperclip/pull/413)
+- Add support for [RapiDoc UI](https://mrin9.github.io/RapiDoc/index.html). [PR#420](https://github.com/paperclip-rs/paperclip/pull/420)
+- Add example support for derived `Apiv2Schema`. [PR#421](https://github.com/paperclip-rs/paperclip/pull/421)
+- Add ability to not generate documentation for some operations through the skip attribute on api_v2_schema macro. [PR#423](https://github.com/paperclip-rs/paperclip/pull/423)
+- Add support for deprecated operations. [PR#424](https://github.com/paperclip-rs/paperclip/pull/424)
+
+### Fixed
+- Fix missing slash between url parts [PR#416](https://github.com/paperclip-rs/paperclip/pull/416)
+- Properly support non-BoxBody response payload types [PR#414](https://github.com/paperclip-rs/paperclip/pull/414)
+- Fix required fields definition when using serde flatten [PR#412](https://github.com/paperclip-rs/paperclip/pull/412)
+- Fix reference urls not being RFC3986-compliant [PR#411](https://github.com/paperclip-rs/paperclip/pull/411)
+
 ## [0.7.0] - 2022-04-03
 ### Added
 - Add openapi component rename attribute [PR#367](https://github.com/paperclip-rs/paperclip/pull/367)
